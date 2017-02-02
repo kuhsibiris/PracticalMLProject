@@ -1,0 +1,58 @@
+library(dplyr)
+library(caret)
+library(purrr)
+library(tidyr)
+library(doParallel)
+
+
+rm(list=ls())
+registerDoParallel(cores=3)
+setwd("~/PracticalMLProject")
+
+if(!file.exists("training.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                      "training.csv")
+}
+
+if(!file.exists("testing.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                      "testing.csv")
+}
+
+training<-read.csv("training.csv",stringsAsFactors = FALSE,na.strings = c("","NA","<NA>","#DIV/0!"))
+testing<-read.csv("testing.csv")
+
+colsnum<-colnames(training)[sapply(training,class)=="numeric"]
+nonmissings<-map_df(training,~sum(!is.na(.x)))
+nonmissings<-gather(nonmissings,variable,valor)
+difvalues<-map_df(training,~length(unique(.x)))
+difvalues<-gather(difvalues,variable,valor)
+
+to_remove<-difvalues$variable[difvalues$valor<3]
+
+training<-training %>% dplyr::select(-one_of(to_remove))
+
+# incross<-createDataPartition(training$classe,p=0.3,list=FALSE) 
+# crossv<-training[incross,] training<-training[-incross,]
+
+trainingpre=preProcess(training,c("center","scale","knnImpute"))
+
+training2<-predict(trainingpre,training)
+training2$X<-NULL
+
+#the following variables [1] "roll_belt"        "total_accel_belt" "max_roll_belt"    "max_picth_belt"   "min_roll_belt"   
+#[6] "min_pitch_belt"   "avg_roll_belt"    "avg_yaw_belt"     "accel_belt_y"
+# are highly correlated with one another will remove all but avg_roll_belt that seems to be the most correlated
+# with the rest of variables, others are detected as full colineality
+
+removecols<-c("min_yaw_belt","amplitude_pitch_arm" ,
+        "min_roll_dumbbell","max_yaw_forearm","amplitude_yaw_arm","min_yaw_dumbbell")
+
+training2<-training2 %>% dplyr::select(-one_of(removecols))
+
+train_control<-trainControl(method = "cv",number = 10)
+
+modelo1<-train(data=training2,method="lda",classe~.-1,trControl=train_control)
+
+data1<-predict(trainingpre,testing)
+final<-predict(modelo1,data1[,colnames(data1)%in% colnames(training2)])
