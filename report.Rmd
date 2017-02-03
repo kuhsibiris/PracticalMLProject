@@ -1,0 +1,148 @@
+---
+title: "Building a Model for Human Activity Recognition"
+author: "Kuhsibiris"
+date: "February 2, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Abstract
+
+This document describes the creation of a model for human activity recognition (see acknowledgment below), the method chosen was linear discriminant analysis, the accuraccy of the model is estimated at 79.16% via cross validaton, preprossesing was done to remove missing values and to adress multicolineality.
+
+## Introduction 
+
+The set consists of 19622 observation with 160 variables, from these we would like to predict the classe. The labels for this variable are
+
+* A. Doing the exercise correctly
+* B. Throwing elbows to the front
+* C. Lifting the dumbbell only halfway
+* D. Lowering the dumbbell only halfway
+* E. Throwing the hips to the front
+
+## Preprossesing
+
+```{r,include=FALSE}
+library(dplyr)
+library(caret)
+library(purrr)
+library(tidyr)
+library(doParallel)
+library(corrplot)
+library(Matrix)
+
+
+rm(list=ls())
+registerDoParallel(cores=3)
+setwd("~/PracticalMLProject")
+
+if(!file.exists("training.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                      "training.csv")
+}
+
+if(!file.exists("testing.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                      "testing.csv")
+}
+
+training<-read.csv("training.csv",stringsAsFactors = FALSE,na.strings = c("","NA","<NA>","#DIV/0!"))
+testing<-read.csv("testing.csv")
+
+colsnum<-colnames(training)[sapply(training,class)=="numeric"]
+nonmissings<-map_df(training,~sum(!is.na(.x)))
+nonmissings<-gather(nonmissings,variable,valor)
+difvalues<-map_df(training,~length(unique(.x)))
+difvalues<-gather(difvalues,variable,valor)
+
+to_remove<-difvalues$variable[difvalues$valor<3]
+```
+
+
+
+The first step taken is to remove those features that have very little predictibility and thus very little predictive power, in this step we take out all numeric variables that have one or two values, those are:
+
+```{r, echo=FALSE}
+to_remove
+```
+
+In addition we remove the identifier variable as that variable should have no predictive power, the time and the individual as this may induce bias into the model.
+```{r,include=FALSE}
+training<-training %>% dplyr::select(-one_of(to_remove))
+
+# incross<-createDataPartition(training$classe,p=0.3,list=FALSE) 
+# crossv<-training[incross,] training<-training[-incross,]
+
+```
+This data set has 1.749.623 missing values, as most methods do not perform well when these are present, the solution we take to this problen is imputing the data using the k-nearest neighbors imputation.
+
+```{r, results=FALSE}
+trainingpre=preProcess(training,c("center","scale","knnImpute"))
+```
+```{r,include=FALSE}
+training2<-predict(trainingpre,training)
+training2$X<-NULL
+```
+Doing an analylis to remove collinear variables we find we must remove the following variables.
+
+```{r, include=FALSE}
+rankfist<-function(i){
+rankMatrix(training2[colnames(training2)%in% colsnum][1:i])
+}
+
+fin<-(training2[colnames(training2)%in% colsnum] %>% dim)[2]
+milista<-map(1:fin,rankfist)
+milista2<-map(milista,`[[`,1)
+
+```
+
+
+
+```{r}
+unlist(milista2)
+colnames(training2[colnames(training2)%in% colsnum])[c(10,66,95)]
+to_remove2<-colnames(training2[colnames(training2)%in% colsnum])[c(10,66,95)]
+training2<-training2 %>% dplyr::select(-one_of(to_remove2))
+```
+This implies that the columns mentioned should be removed..
+
+## Cross validaton
+
+to cross validate we will use k-fold validation using the built-in method in the caret package
+
+```{r}
+train_control<-trainControl(method = "cv",number = 10)
+
+```
+```{r, include=FALSE}
+training2$user_name<-training2$raw_timestamp_part_1<-training2$raw_timestamp_part_2<-training2$cvtd_timestamp<-NULL
+
+```
+
+## Model
+
+The model was trained using linear discriminant analysis
+
+```{r}
+modelo1<-train(data=training2,method="lda",classe~.-1,trControl=train_control)
+modelo1
+mau<-predict(modelo1$finalModel,modelo1$trainingData[,modelo1$finalModel$xNames])
+ggplot(as.data.frame(mau$posterior),aes(x=A,y=B))+geom_point(aes(color=training2$classe))
+
+```
+
+
+
+
+## Acknowledgment
+
+We would like to thank the authors of:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4Xa3rLynU
+
+For letting us use this data set.
